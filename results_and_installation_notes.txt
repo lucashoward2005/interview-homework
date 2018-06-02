@@ -1,0 +1,128 @@
+Notes
+
+Quick check script:
+from influxdb import InfluxDBClient
+client = InfluxDBClient(host='ec2-54-200-187-28.us-west-2.compute.amazonaws.com',port=8086)
+client.get_list_database()
+client.switch_database('homework')
+client.query('SELECT lucashoward2005 FROM homework;')
+
+Results:
+>>> client.query('SELECT lucashoward2005 FROM homework;')
+ResultSet({'('homework', None)': [{'time': '2018-06-01T23:23:41.365066485Z', 'lucashoward2005': 1}, {'time': '2018-06-01T23:32:53.664576672Z', 'lucashoward2005': 2}, {'time': '2018-06-01T23:34:53.165001064Z', 'lucashoward2005': 2}, {'time': '2018-06-01T23:48:18.385269591Z', 'lucashoward2005': 1}, {'time': '2018-06-01T23:55:01.664766773Z', 'lucashoward2005': 0}]})
+
+Steps:
+
+Starting from scratch
+
+1) Created new AWS Account
+2) Installed ecs-cli
+3) (already had aws-cli installed, but you would install it here )
+3) Created fresh ecs cluster
+4) Created Programatic IAM user with admin access
+5) Created ecr influx repo
+6) Pulled library/influx docker image to local desktop
+7) Tagged local image to match ecr repo
+8) Configured AWS CLI for ECR ( credentials file )
+9) Obtained AWS login token for docker (aws ecr get-login)
+10) Logged docker into AWS ECR
+11) Pushed influx image to remote ecr repo
+12) Ran aws ssm get-parameters --region us-west-2 --names /aws/service/ecs/optimized-ami/amazon-linux/recommended to get best AMI
+13) Created AWS Instance Role Policy ( https://docs.aws.amazon.com/AmazonECS/latest/developerguide/instance_IAM_role.html )
+      amzn-ami-2018.03.a-amazon-ecs-optimized
+14) Created AWS ecsInstanceRole Role using new policy
+15) Launched AWS EC2 Instance with (https://docs.aws.amazon.com/AmazonECS/latest/developerguide/bootstrap_container_instance.html)
+Iam Role:
+      ecsInstanceRole
+User Data:
+      #!/bin/bash
+      echo "ECS_CLUSTER=lucashoward2005" >> /etc/ecs/ecs.config
+Ports (wide open, but no real data out there ):
+  22
+  80  ( probably don't need this )
+  443 ( probably don't need this )
+  32768-61000
+  8086
+  8083
+  2003
+Security Group:
+  lucashoward2005
+
+16) Must have made a typo... connecting to the instance and it was still the default of ECS_CLUSTER=mycluster
+   Fixed this, then "sudo stop ecs" -> "sudo start ecs"
+17) Verified container registered with ECS
+18) Ran ecs-cli compose (ecs-cli compose --file docker-compose.yml service up)
+   Yelled at by Docker for having user relative paths; guess the version of Docker in the AMI doesn't allow it?
+  Even though Docker says it's allowed: https://docs.docker.com/compose/compose-file/#volumes
+19) Modified docker compose file
+volumes:
+  - "~/docker/influxdb/data:/var/lib/influxdb"
+  - "~/docker/influxdb/etc:/etc/influxdb"
+<to>
+volumes:
+  - "/opt/docker/influxdb/data:/var/lib/influxdb"
+  - "/opt/docker/influxdb/etc:/etc/influxdb"
+for absolute paths
+(Note could use EBS here for persistance )
+
+20) Executing ecs-cli compose --file docker-compose_V2.yml service up
+Connecting to server and verified it's running
+[root@ip-172-31-20-249 /]# docker ps
+CONTAINER ID        IMAGE                            COMMAND                  CREATED             STATUS              PORTS                                                                    NAMES
+c8b7e5ae52ad        influxdb                         "/entrypoint.sh infl…"   28 seconds ago      Up 26 seconds       0.0.0.0:2003->2003/tcp, 0.0.0.0:8083->8083/tcp, 0.0.0.0:8086->8086/tcp   ecs-tmp-3-influxdb-fcc1f3cc99fec5eb5000
+c3e48593c587        amazon/amazon-ecs-agent:latest   "/agent"                 35 minutes ago      Up 35 minutes                                                                                ecs-agent
+[root@ip-172-31-20-249 /]#
+21) Verified that the DB is reachable:
+AUS-10020:tmp lhoward$ telnet ec2-54-200-187-28.us-west-2.compute.amazonaws.com 8086
+Trying 54.200.187.28...
+Connected to ec2-54-200-187-28.us-west-2.compute.amazonaws.com.
+Escape character is '^]'.
+This is a test
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Connection: close
+
+400 Bad RequestConnection closed by foreign host.
+AUS-10020:tmp lhoward$
+23)Installed influxdb locally so I can get the CLI( https://portal.influxdata.com/downloads )
+brew update
+brew install influxdb
+
+24) Connected to influxdb (never used it before) and created database with table and column
+SHOW DATABASES
+CREATE DATABASE lucashoward2005
+USE lucashoward2005
+
+25) Read up on influxdb... intersting non-relational world ( https://docs.influxdata.com/influxdb/v1.5/introduction/getting-started/ )
+at least inserts are very easy
+
+26) Switch to correct Python (export PATH="/usr/local/opt/python/libexec/bin:$PATH")
+27) Install module ( pip install influxdb )
+
+28)InfluxDB really wants you to use their stuff; some great tutorials
+(http://influxdb-python.readthedocs.io/en/latest/examples.html)
+(https://www.influxdata.com/blog/getting-started-python-influxdb/)
+
+29)Starting on the lambda composition ( going with Python because I like playing with new code... Java is supported by Lambda though)
+Good docs here:
+https://docs.aws.amazon.com/lambda/latest/dg/python-programming-model-handler-types.html
+And of course Stack Overflow:
+https://stackoverflow.com/questions/44706005/lambda-function-to-filter-aws-ec2-instances-based-on-tags
+And of course random internet people:
+https://davidhamann.de/2017/01/27/import-issues-running-python-aws-lambda/
+Boto3:
+http://boto3.readthedocs.io/en/latest/guide/ec2-example-managing-instances.html
+Using the zip at AWS:
+
+30) Suddenly realized that AWS isn't going to just give me influx module for free...
+
+    Inline editor is great for quick work, but I'm going to have to use a zip based deployment
+    https://docs.aws.amazon.com/lambda/latest/dg/lambda-python-how-to-create-deployment-package.html
+    https://docs.aws.amazon.com/lambda/latest/dg/python-programming-model-handler-types.html
+    https://docs.python.org/3/tutorial/venv.html
+
+31) Almost forgot about running state
+https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-instance-status.html
+
+32) Everything checks out, homework done.
+
